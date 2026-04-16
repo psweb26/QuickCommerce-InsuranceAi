@@ -4,6 +4,7 @@ import random
 from typing import Any
 
 import httpx
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
 from app.utils.time import utc_now
@@ -94,7 +95,11 @@ def _simulate_zone_signal(city: str, zone: str) -> dict[str, float | bool]:
     }
 
 
-async def collect_zone_signal(city: str, zone: str) -> dict[str, float | bool]:
+async def collect_zone_signal(
+    city: str,
+    zone: str,
+    db: AsyncIOMotorDatabase | None = None,
+) -> dict[str, float | bool]:
     base = _simulate_zone_signal(city, zone)
     weather = await _fetch_weather(city)
     aqi = await _fetch_aqi(city)
@@ -105,6 +110,19 @@ async def collect_zone_signal(city: str, zone: str) -> dict[str, float | bool]:
 
     if aqi:
         base["aqi"] = round(float(aqi["aqi"]), 2)
+
+    if db is not None:
+        await db.weather_history.insert_one(
+            {
+                "city": city,
+                "zone": zone,
+                "rain_mm": float(base["rain_mm"]),
+                "aqi": float(base["aqi"]),
+                "heat_index_c": float(base["heat_index_c"]),
+                "traffic_delay_index": float(base["traffic_delay_index"]),
+                "captured_at": utc_now(),
+            }
+        )
 
     return base
 

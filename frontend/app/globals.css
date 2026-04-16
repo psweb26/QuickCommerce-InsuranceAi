@@ -62,4 +62,9 @@ a {
   border-radius: 999px;
 }
 
+.leaflet-container {
+  z-index: 0;
+  font-family: var(--font-body), sans-serif;
+}
+
 

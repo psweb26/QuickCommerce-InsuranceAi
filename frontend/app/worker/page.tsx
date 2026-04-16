@@ -9,6 +9,7 @@ import { RiskRadarChart } from "@/components/charts/RiskRadarChart";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricTile } from "@/components/ui/MetricTile";
+import { PayoutSimulatorModal } from "@/components/ui/PayoutSimulatorModal";
 import { authApi, clearAuthState, getAuthToken, saveAuthState, simulationApi, workerApi } from "@/lib/api";
 import { currencyINR, percent, prettyDate, titleCase } from "@/lib/format";
 import { Claim, DashboardPayload } from "@/types";
@@ -75,6 +76,21 @@ export default function WorkerPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [simulatingPayout, setSimulatingPayout] = useState(false);
   const [copiedTxnId, setCopiedTxnId] = useState("");
+  const [seenPayoutTxnIds, setSeenPayoutTxnIds] = useState<Set<string>>(new Set());
+  const [payoutFeedInitialized, setPayoutFeedInitialized] = useState(false);
+  const [payoutModal, setPayoutModal] = useState<{
+    open: boolean;
+    amount: number;
+    upiId: string;
+    transactionId: string;
+    createdAt: string;
+  }>({
+    open: false,
+    amount: 0,
+    upiId: "",
+    transactionId: "",
+    createdAt: "",
+  });
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
 
@@ -130,6 +146,8 @@ export default function WorkerPage() {
       const res = await authApi.login(phone, otp);
       saveAuthState(res.access_token, res.worker);
       setToken(res.access_token);
+      setSeenPayoutTxnIds(new Set());
+      setPayoutFeedInitialized(false);
       setMessage("Login successful. Live dashboard unlocked.");
       await loadDashboard(res.access_token);
     } catch (err) {
@@ -152,6 +170,8 @@ export default function WorkerPage() {
       const res = await authApi.register(payload);
       saveAuthState(res.access_token, res.worker);
       setToken(res.access_token);
+      setSeenPayoutTxnIds(new Set());
+      setPayoutFeedInitialized(false);
       setPhone(registerForm.phone);
       setOtp("");
       setRegisterForm(initialRegisterForm);
@@ -168,6 +188,8 @@ export default function WorkerPage() {
     clearAuthState();
     setToken("");
     setDashboard(null);
+    setSeenPayoutTxnIds(new Set());
+    setPayoutFeedInitialized(false);
     setMessage("Session cleared.");
   };
 
@@ -299,6 +321,39 @@ export default function WorkerPage() {
     const match = note.message.match(/Txn:\s*([A-Z0-9]+)/i);
     return match?.[1] || "";
   };
+
+  const parseUpiId = (note: { message: string; upi_id?: string }) => {
+    if (note.upi_id) return note.upi_id;
+    const match = note.message.match(/UPI\s+([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+)/i);
+    return match?.[1] || "";
+  };
+
+  useEffect(() => {
+    if (!dashboard?.payout_notifications?.length) return;
+    if (!payoutFeedInitialized) {
+      const initialTxnIds = dashboard.payout_notifications
+        .map((note) => parseTxnId(note))
+        .filter(Boolean);
+      setSeenPayoutTxnIds(new Set(initialTxnIds));
+      setPayoutFeedInitialized(true);
+      return;
+    }
+
+    const latest = dashboard.payout_notifications.find((note) => parseTxnId(note));
+    if (!latest) return;
+
+    const txnId = parseTxnId(latest);
+    if (!txnId || seenPayoutTxnIds.has(txnId)) return;
+
+    setSeenPayoutTxnIds((prev) => new Set(prev).add(txnId));
+    setPayoutModal({
+      open: true,
+      amount: latest.amount,
+      upiId: parseUpiId(latest),
+      transactionId: txnId,
+      createdAt: latest.created_at,
+    });
+  }, [dashboard, seenPayoutTxnIds, payoutFeedInitialized]);
 
   if (!token || !dashboard) {
     return (
@@ -665,6 +720,15 @@ export default function WorkerPage() {
           Approved payouts in this session: {approvedClaims.length}
         </p>
       </section>
+
+      <PayoutSimulatorModal
+        open={payoutModal.open}
+        amount={payoutModal.amount}
+        upiId={payoutModal.upiId}
+        transactionId={payoutModal.transactionId}
+        createdAt={payoutModal.createdAt}
+        onClose={() => setPayoutModal((prev) => ({ ...prev, open: false }))}
+      />
     </div>
   );
 }

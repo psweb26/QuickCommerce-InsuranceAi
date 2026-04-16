@@ -124,6 +124,8 @@ async def _reset_demo_collections(db: AsyncIOMotorDatabase) -> None:
     await db.payouts.delete_many({})
     await db.payout_notifications.delete_many({})
     await db.fraud_logs.delete_many({})
+    await db.worker_pings.delete_many({})
+    await db.weather_history.delete_many({})
     await db.otp_sessions.delete_many({})
     await db.workers.delete_many({})
 
@@ -173,27 +175,30 @@ async def _build_target_payouts(
     events_created = 0
     approved_claims = 0
     city_zone_pairs = list({(worker["city"], worker["zone"]) for worker in workers})
+    all_zones = sorted({worker["zone"] for worker in workers})
     sequence = [
-        ("rain", 0.9, 6.0),
-        ("traffic", 0.86, 4.5),
-        ("store_outage", 0.92, 6.5),
-        ("heat", 0.84, 5.0),
+        ("store_outage", 0.94, 9.0),
+        ("server_outage", 0.91, 8.0),
+        ("traffic", 0.9, 7.0),
+        ("rain", 0.88, 8.0),
     ]
 
     financials = await _compute_financials(db)
     cursor = 0
     guard = 0
 
-    while financials["total_payout"] < target_payout and guard < 18:
+    while financials["total_payout"] < target_payout and guard < 32:
         now = utc_now()
         disruption_type, severity, hours = sequence[cursor % len(sequence)]
         city, zone = city_zone_pairs[cursor % len(city_zone_pairs)]
+        affected_zones = all_zones if (cursor % 2 == 0) else [zone]
+        event_city = "India-Urban-Grid" if len(affected_zones) > 1 else city
 
         event = {
             "type": disruption_type,
             "severity": severity,
-            "city": city,
-            "affected_zones": [zone],
+            "city": event_city,
+            "affected_zones": affected_zones,
             "start_time": now,
             "end_time": now + timedelta(hours=hours),
             "source": "seed-target-payout",
@@ -224,7 +229,7 @@ async def _rebalance_to_sustainable_ratio(
 
     financials = await _compute_financials(db)
 
-    while financials["loss_ratio"] > max_ratio and premium_cycles < 12:
+    while financials["loss_ratio"] > max_ratio and premium_cycles < 18:
         for worker in workers:
             current_worker = await db.workers.find_one({"_id": worker["_id"]})
             if current_worker:
@@ -232,16 +237,19 @@ async def _rebalance_to_sustainable_ratio(
         premium_cycles += 1
         financials = await _compute_financials(db)
 
-    while financials["loss_ratio"] < min_ratio and payout_events < 6:
+    all_zones = sorted({worker["zone"] for worker in workers})
+    while financials["loss_ratio"] < min_ratio and payout_events < 16:
         now = utc_now()
         city, zone = workers[payout_events % len(workers)]["city"], workers[payout_events % len(workers)]["zone"]
+        affected_zones = all_zones if payout_events % 2 == 0 else [zone]
+        event_city = "India-Urban-Grid" if len(affected_zones) > 1 else city
         event = {
-            "type": "traffic",
-            "severity": 0.9,
-            "city": city,
-            "affected_zones": [zone],
+            "type": "store_outage",
+            "severity": 0.95,
+            "city": event_city,
+            "affected_zones": affected_zones,
             "start_time": now,
-            "end_time": now + timedelta(hours=5),
+            "end_time": now + timedelta(hours=8),
             "source": "seed-ratio-rebalance",
             "trigger_metrics": {"manual": True, "seed_ratio_rebalance": True},
             "created_at": now,

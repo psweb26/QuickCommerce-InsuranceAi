@@ -1,16 +1,31 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Bot, DatabaseZap, Radar } from "lucide-react";
 
 import { ClaimsStatusChart } from "@/components/charts/ClaimsStatusChart";
 import { DisruptionBarChart } from "@/components/charts/DisruptionBarChart";
+import { PredictiveRiskChart } from "@/components/charts/PredictiveRiskChart";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { MetricTile } from "@/components/ui/MetricTile";
 import { adminApi, simulationApi } from "@/lib/api";
 import { currencyINR, percent, prettyDate, titleCase } from "@/lib/format";
-import { Claim, FraudAlert } from "@/types";
+import { Claim, FraudAlert, LiveOperationsPayload, PredictiveRiskPayload } from "@/types";
+
+const LiveOperationsMap = dynamic(
+  () =>
+    import("@/components/maps/LiveOperationsMap").then((mod) => mod.LiveOperationsMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[430px] items-center justify-center rounded-2xl border border-slate-200 bg-white/70 text-sm text-slate-500">
+        Loading map...
+      </div>
+    ),
+  },
+);
 
 interface AdminMetrics {
   total_workers: number;
@@ -37,6 +52,8 @@ export default function AdminPage() {
   const [analytics, setAnalytics] = useState<Array<{ type: string; count: number; avg_severity: number }>>([]);
   const [fraudAlerts, setFraudAlerts] = useState<FraudAlert[]>([]);
   const [claims, setClaims] = useState<Claim[]>([]);
+  const [liveOps, setLiveOps] = useState<LiveOperationsPayload | null>(null);
+  const [predictive, setPredictive] = useState<PredictiveRiskPayload | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<"" | "seed" | "monitor" | "refresh" | "fraud" | "godmode">("");
@@ -58,17 +75,21 @@ export default function AdminPage() {
     setLoading(true);
     setError("");
     try {
-      const [metricsRes, analyticsRes, fraudRes, claimsRes] = await Promise.all([
+      const [metricsRes, analyticsRes, fraudRes, claimsRes, liveOpsRes, predictiveRes] = await Promise.all([
         adminApi.metrics(),
         adminApi.disruptionAnalytics(),
         adminApi.fraudAlerts(),
         adminApi.claims(),
+        adminApi.liveOperations(),
+        adminApi.predictiveRisk(),
       ]);
 
       setMetrics(metricsRes.metrics as AdminMetrics);
       setAnalytics(analyticsRes.items as Array<{ type: string; count: number; avg_severity: number }>);
       setFraudAlerts(fraudRes.items as FraudAlert[]);
       setClaims(claimsRes.items as Claim[]);
+      setLiveOps(liveOpsRes);
+      setPredictive(predictiveRes);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load admin data");
     } finally {
@@ -76,8 +97,24 @@ export default function AdminPage() {
     }
   };
 
+  const refreshLiveOps = async () => {
+    try {
+      const payload = await adminApi.liveOperations();
+      setLiveOps(payload);
+    } catch {
+      // Keep dashboard stable even if map refresh fails temporarily.
+    }
+  };
+
   useEffect(() => {
     void loadData();
+  }, []);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      void refreshLiveOps();
+    }, 20000);
+    return () => clearInterval(interval);
   }, []);
 
   const blockedWorkerIds = useMemo(
@@ -360,6 +397,31 @@ export default function AdminPage() {
         </Card>
       </section>
 
+      <Card>
+        <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-heading)" }}>
+          Live Operations Map
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Red geofences represent active disruptions. Workers inside any geofence are marked eligible.
+        </p>
+        <div className="mt-3">
+          <LiveOperationsMap
+            disruptions={liveOps?.disruptions || []}
+            workerPings={liveOps?.worker_pings || []}
+          />
+        </div>
+      </Card>
+
+      <Card>
+        <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-heading)" }}>
+          Predictive Risk: Likely Payouts (Next Week)
+        </h2>
+        <p className="mt-1 text-sm text-slate-600">
+          Model: {predictive?.model || "moving_average_weather_adjusted"} | Weather-adjusted moving average forecast.
+        </p>
+        <PredictiveRiskChart history={predictive?.history || []} forecast={predictive?.forecast || []} />
+      </Card>
+
       <section className="grid gap-4 lg:grid-cols-2">
         <Card>
           <h2 className="text-xl font-bold" style={{ fontFamily: "var(--font-heading)" }}>
@@ -468,6 +530,7 @@ export default function AdminPage() {
           </table>
         </div>
       </section>
+
       {processingOverlay ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/35 backdrop-blur-sm">
           <div className="w-full max-w-md rounded-2xl border border-white/70 bg-white p-5 shadow-2xl">
@@ -484,5 +547,4 @@ export default function AdminPage() {
     </div>
   );
 }
-
 

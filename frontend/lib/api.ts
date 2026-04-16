@@ -1,5 +1,5 @@
 import { API_BASE_URL, STORAGE_KEYS } from "@/lib/constants";
-import { DashboardPayload } from "@/types";
+import { DashboardPayload, LiveOperationsPayload, PredictiveRiskPayload } from "@/types";
 
 async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -59,6 +59,17 @@ export const adminApi = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  liveOperations: (city?: string, zone?: string) => {
+    const query = new URLSearchParams();
+    if (city) query.set("city", city);
+    if (zone) query.set("zone", zone);
+    const suffix = query.toString() ? `?${query.toString()}` : "";
+    return request<LiveOperationsPayload>(`/admin/live-operations${suffix}`);
+  },
+  predictiveRisk: (lookbackDays = 21, horizonDays = 7) =>
+    request<PredictiveRiskPayload>(
+      `/admin/predictive-risk?lookback_days=${lookbackDays}&horizon_days=${horizonDays}`,
+    ),
 };
 
 export const simulationApi = {

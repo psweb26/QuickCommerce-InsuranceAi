@@ -5,6 +5,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.services.claim_engine import process_disruption_event
 from app.services.disruption_provider import collect_zone_signal, detect_disruptions_from_signal
+from app.services.geospatial_service import build_disruption_geofence
 from app.services.policy_service import renew_expired_policies
 from app.utils.ids import serialize_document
 from app.utils.time import utc_now
@@ -28,7 +29,7 @@ async def run_monitoring_cycle(db: AsyncIOMotorDatabase) -> dict[str, int]:
     now = utc_now()
 
     for city, zone in zones:
-        signal = await collect_zone_signal(city=city, zone=zone)
+        signal = await collect_zone_signal(city=city, zone=zone, db=db)
         disruptions = detect_disruptions_from_signal(city=city, zone=zone, signal=signal)
 
         for disruption in disruptions:
@@ -44,6 +45,11 @@ async def run_monitoring_cycle(db: AsyncIOMotorDatabase) -> dict[str, int]:
             if existing:
                 continue
 
+            disruption["geofence"] = build_disruption_geofence(
+                city=city,
+                zone=zone,
+                severity=float(disruption.get("severity", 0.5)),
+            )
             result = await db.disruptions.insert_one(disruption)
             disruption["_id"] = result.inserted_id
 
@@ -59,6 +65,13 @@ async def run_monitoring_cycle(db: AsyncIOMotorDatabase) -> dict[str, int]:
 
 
 async def create_manual_disruption(db: AsyncIOMotorDatabase, event: dict[str, Any]) -> dict[str, Any]:
+    if not event.get("geofence"):
+        zone = (event.get("affected_zones") or [event.get("city", "")])[0]
+        event["geofence"] = build_disruption_geofence(
+            city=str(event.get("city", "")),
+            zone=str(zone),
+            severity=float(event.get("severity", 0.5)),
+        )
     result = await db.disruptions.insert_one(event)
     event["_id"] = result.inserted_id
 

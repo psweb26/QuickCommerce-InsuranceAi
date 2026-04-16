@@ -2,6 +2,12 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
+class DisruptionGeofence(BaseModel):
+    center_lat: float
+    center_lng: float
+    radius_km: float
+
+
 class DisruptionEventCreate(BaseModel):
     type: str
     severity: float
@@ -20,4 +26,5 @@ class DisruptionResponse(BaseModel):
     end_time: datetime
     source: str
     trigger_metrics: dict[str, float | bool]
+    geofence: DisruptionGeofence | None = None
 

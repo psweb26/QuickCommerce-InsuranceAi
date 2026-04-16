@@ -23,4 +23,7 @@ async def ensure_indexes(db: AsyncIOMotorDatabase) -> None:
     await db.payouts.create_index([("transaction_id", ASCENDING)], unique=True)
 
     await db.fraud_logs.create_index([("created_at", DESCENDING)])
+    await db.worker_pings.create_index([("worker_id", ASCENDING), ("pinged_at", DESCENDING)])
+    await db.worker_pings.create_index([("city", ASCENDING), ("zone", ASCENDING), ("pinged_at", DESCENDING)])
+    await db.weather_history.create_index([("city", ASCENDING), ("zone", ASCENDING), ("captured_at", DESCENDING)])
 

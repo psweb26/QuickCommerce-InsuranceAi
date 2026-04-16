@@ -1,12 +1,14 @@
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_db
 from app.models.disruption import DisruptionEventCreate
 from app.services.analytics_service import disruption_analytics, fetch_admin_metrics
+from app.services.live_ops_service import compute_live_operations_snapshot
 from app.services.monitoring_service import create_manual_disruption, run_monitoring_cycle
+from app.services.predictive_analytics_service import compute_predictive_risk
 from app.utils.ids import serialize_document
 from app.utils.time import utc_now
 
@@ -41,6 +43,30 @@ async def admin_recent_claims(db: AsyncIOMotorDatabase = Depends(get_db)):
 async def admin_workers(db: AsyncIOMotorDatabase = Depends(get_db)):
     rows = await db.workers.find({}).sort("created_at", -1).to_list(length=200)
     return {"success": True, "items": [serialize_document(item) for item in rows]}
+
+
+@router.get("/live-operations")
+async def admin_live_operations(
+    city: str | None = Query(default=None),
+    zone: str | None = Query(default=None),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    payload = await compute_live_operations_snapshot(db=db, city=city, zone=zone)
+    return {"success": True, **payload}
+
+
+@router.get("/predictive-risk")
+async def admin_predictive_risk(
+    lookback_days: int = Query(default=21, ge=7, le=90),
+    horizon_days: int = Query(default=7, ge=1, le=30),
+    db: AsyncIOMotorDatabase = Depends(get_db),
+):
+    payload = await compute_predictive_risk(
+        db=db,
+        lookback_days=lookback_days,
+        horizon_days=horizon_days,
+    )
+    return {"success": True, **payload}
 
 
 @router.post("/run-monitoring")

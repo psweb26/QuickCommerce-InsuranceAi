@@ -6,6 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.services.fraud_engine import calculate_fraud_risk
+from app.services.live_ops_service import record_worker_ping
 from app.utils.time import utc_now
 
 
@@ -130,6 +131,7 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
         is_eligible = work_loss_ratio >= eligibility_threshold
 
         if is_eligible:
+            await record_worker_ping(db=db, worker=worker)
             fraud_result = await calculate_fraud_risk(
                 db=db,
                 worker=worker,
@@ -140,15 +142,25 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
             frs = float(fraud_result["fraud_risk_score"])
             if policy_risk_score < 0.3:
                 frs = max(0.0, frs - 0.12)
+            gps_spoofed = bool(fraud_result.get("gps_spoofed", False))
+            weather_mismatch_high = bool(fraud_result.get("weather_mismatch_high", False))
             if bool(fraud_result.get("impossible_velocity_flag", False)) and frs < 0.72:
                 frs = 0.72
             claim_doc["fraud_risk_score"] = round(frs, 4)
             claim_doc["impossible_velocity_flag"] = bool(fraud_result.get("impossible_velocity_flag", False))
 
-            if frs >= 0.6:
+            if gps_spoofed:
+                claim_doc["status"] = "blocked"
+                claim_doc["reason"] = "Fraud: GPS Spoofed"
+                summary["blocked_claims"] += 1
+            elif frs >= 0.6:
                 claim_doc["status"] = "blocked"
                 claim_doc["reason"] = "Blocked by fraud engine (FRS too high)"
                 summary["blocked_claims"] += 1
+            elif weather_mismatch_high:
+                claim_doc["status"] = "under_review"
+                claim_doc["reason"] = "Flagged by weather cross-check"
+                summary["review_claims"] += 1
             elif frs >= 0.45:
                 claim_doc["status"] = "under_review"
                 claim_doc["reason"] = "Flagged for review by fraud engine"
@@ -193,6 +205,7 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
                             "message": claim_doc["payout_message"],
                             "transaction_id": txn_id,
                             "trigger_event": disruption["type"],
+                            "upi_id": worker["upi_id"],
                             "amount": payout_amount,
                             "created_at": utc_now(),
                         }

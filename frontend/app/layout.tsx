@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Sora, Space_Grotesk } from "next/font/google";
+import "leaflet/dist/leaflet.css";
 
 import "./globals.css";
 import { AnimatedBackdrop } from "@/components/AnimatedBackdrop";

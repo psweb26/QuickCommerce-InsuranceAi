@@ -60,6 +60,11 @@ export interface Disruption {
   end_time: string;
   source: string;
   trigger_metrics: Record<string, number | boolean>;
+  geofence?: {
+    center_lat: number;
+    center_lng: number;
+    radius_km: number;
+  };
 }
 
 export interface Claim {
@@ -106,6 +111,55 @@ export interface DashboardPayload {
     created_at: string;
     transaction_id?: string;
     trigger_event?: string;
+    upi_id?: string;
   }>;
+}
+
+export interface WorkerPing {
+  _id?: string;
+  worker_id: string;
+  worker_code?: string;
+  city: string;
+  zone: string;
+  lat: number;
+  lng: number;
+  speed_kmph: number;
+  jump_km?: number;
+  pinged_at: string;
+  eligible: boolean;
+  matching_disruptions?: string[];
+}
+
+export interface LiveOperationsDisruption extends Disruption {}
+
+export interface LiveOperationsPayload {
+  success: boolean;
+  city_filter?: string | null;
+  zone_filter?: string | null;
+  disruptions: LiveOperationsDisruption[];
+  worker_pings: WorkerPing[];
+  summary: {
+    active_disruptions: number;
+    workers_tracked: number;
+    eligible_workers: number;
+    avg_worker_speed_kmph: number;
+  };
+}
+
+export interface PredictiveRiskPoint {
+  date: string;
+  payout?: number;
+  weather_pressure?: number;
+  likely_payout?: number;
+  weather_delta?: number;
+}
+
+export interface PredictiveRiskPayload {
+  success: boolean;
+  model: string;
+  lookback_days: number;
+  horizon_days: number;
+  history: PredictiveRiskPoint[];
+  forecast: PredictiveRiskPoint[];
 }
 
