@@ -8,7 +8,7 @@ interface CardProps {
 
 export function Card({ children, className }: CardProps) {
   return (
-    <section className={clsx("glass rounded-2xl border border-white/60 p-5 shadow-lg", className)}>
+    <section className={clsx("luxe-card rounded-2xl p-5", className)}>
       {children}
     </section>
   );

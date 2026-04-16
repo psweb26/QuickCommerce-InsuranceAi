@@ -251,10 +251,10 @@ export default function WorkerPage() {
     );
 
     return [
-      { name: "approved", value: counts.approved || 0 },
-      { name: "under_review", value: counts.under_review || 0 },
-      { name: "blocked", value: counts.blocked || 0 },
-      { name: "rejected", value: counts.rejected || 0 },
+      { name: "Approved", value: counts.approved || 0 },
+      { name: "Under Review", value: counts.under_review || 0 },
+      { name: "Blocked", value: counts.blocked || 0 },
+      { name: "Rejected", value: counts.rejected || 0 },
     ];
   }, [dashboard]);
 
@@ -289,6 +289,10 @@ export default function WorkerPage() {
   }, [dashboard]);
 
   const approvedClaims = dashboard?.claims?.filter((claim: Claim) => claim.status === "approved") || [];
+  const pendingClaims = dashboard?.claims?.filter((claim: Claim) => claim.status === "under_review").length || 0;
+  const blockedClaims = dashboard?.claims?.filter((claim: Claim) => claim.status === "blocked").length || 0;
+  const riskScoreValue = dashboard?.policy?.risk_score ?? 0;
+  const lowRiskWorker = riskScoreValue <= 0.3;
   const dominantRisk = useMemo(() => {
     if (!dashboard?.policy?.disruption_probabilities) return "No clear threat";
     const entries = Object.entries(dashboard.policy.disruption_probabilities);
@@ -516,6 +520,12 @@ export default function WorkerPage() {
             <p className="mt-1 text-slate-600">
               {dashboard.worker.delivery_platform} | {dashboard.worker.city}, {dashboard.worker.zone}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <Badge tone={lowRiskWorker ? "good" : "warn"}>{lowRiskWorker ? "Low Risk Reward" : "Elevated Risk Watch"}</Badge>
+              <Badge tone="neutral">Active Disruptions: {dashboard.live_disruptions.length}</Badge>
+              <Badge tone="warn">Pending Verification: {pendingClaims}</Badge>
+              <Badge tone={blockedClaims > 0 ? "alert" : "good"}>Fraud Blocks: {blockedClaims}</Badge>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Badge tone="neutral">Worker ID: {dashboard.worker.worker_id}</Badge>

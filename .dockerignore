@@ -1,0 +1,39 @@
+.git
+.github
+.vscode
+*.log
+*.tmp
+*.swp
+
+# Node/Next artifacts
+node_modules
+frontend/node_modules
+frontend/.next
+frontend/out
+
+# Python artifacts
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+backend/__pycache__
+backend/.pytest_cache
+backend/.mypy_cache
+backend/.ruff_cache
+backend/.venv
+
+# Test/build caches
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.cache
+dist
+build
+
+# Env files
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db

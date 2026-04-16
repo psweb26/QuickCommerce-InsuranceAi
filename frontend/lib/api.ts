@@ -2,15 +2,23 @@ import { API_BASE_URL, STORAGE_KEYS } from "@/lib/constants";
 import { DashboardPayload, LiveOperationsPayload, PredictiveRiskPayload } from "@/types";
 
 async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {}),
-    },
-    cache: "no-store",
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+      cache: "no-store",
+    });
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "Network error";
+    throw new Error(
+      `Backend unreachable at ${API_BASE_URL}. Start backend on port 8000 and retry. (${reason})`,
+    );
+  }
 
   if (!response.ok) {
     const fallback = await response.text();

@@ -7,15 +7,23 @@ services:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 }).ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
 
   backend:
+    image: quickcommerce-insurance-ai-backend:latest
     build:
-      context: .
-      dockerfile: backend/Dockerfile
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: gigprotect-backend
     restart: unless-stopped
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     environment:
       - MONGODB_URI=mongodb://mongodb:27017
       - MONGODB_DB=gigprotect_ai
@@ -27,17 +35,27 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 8
+      start_period: 15s
 
   frontend:
+    image: quickcommerce-insurance-ai-frontend:latest
     build:
-      context: .
-      dockerfile: frontend/Dockerfile
+      context: ./frontend
+      dockerfile: Dockerfile
     container_name: gigprotect-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     environment:
       - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api/v1
+      - NEXT_TELEMETRY_DISABLED=1
     ports:
       - "3000:3000"
 

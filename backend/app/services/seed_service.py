@@ -1,11 +1,15 @@
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.services.monitoring_service import create_manual_disruption
 from app.services.policy_service import create_policy_for_worker
 from app.utils.time import utc_now
+
+TARGET_LOSS_RATIO = 0.621
+LOSS_RATIO_TOLERANCE = 0.004
 
 
 SAMPLE_WORKERS: list[dict[str, Any]] = [
@@ -218,49 +222,203 @@ async def _build_target_payouts(
     return events_created, approved_claims
 
 
-async def _rebalance_to_sustainable_ratio(
+async def _insert_precise_payout_adjustment(
+    db: AsyncIOMotorDatabase, workers: list[dict[str, Any]], payout_delta: float
+) -> float:
+    target_payout = round(max(payout_delta, 0.0), 2)
+    if target_payout < 0.01:
+        return 0.0
+
+    chosen_worker: dict[str, Any] | None = None
+    chosen_policy: dict[str, Any] | None = None
+
+    for worker in workers:
+        policy = await db.policies.find_one(
+            {
+                "worker_id": str(worker["_id"]),
+                "status": "active",
+                "end_date": {"$gte": utc_now()},
+                "remaining_coverage": {"$gt": 0},
+            },
+            sort=[("created_at", -1)],
+        )
+        if not policy:
+            latest_worker = await db.workers.find_one({"_id": worker["_id"]})
+            if latest_worker:
+                await create_policy_for_worker(db, latest_worker)
+                policy = await db.policies.find_one(
+                    {
+                        "worker_id": str(worker["_id"]),
+                        "status": "active",
+                        "end_date": {"$gte": utc_now()},
+                        "remaining_coverage": {"$gt": 0},
+                    },
+                    sort=[("created_at", -1)],
+                )
+        if not policy:
+            continue
+        if int(policy.get("claims_used", 0)) >= int(policy.get("max_claims_per_week", 8)):
+            continue
+        if float(policy.get("remaining_coverage", 0.0)) <= 0:
+            continue
+
+        chosen_worker = worker
+        chosen_policy = policy
+        break
+
+    if not chosen_worker or not chosen_policy:
+        return 0.0
+
+    payout_amount = round(min(target_payout, float(chosen_policy["remaining_coverage"])), 2)
+    if payout_amount < 0.01:
+        return 0.0
+
+    now = utc_now()
+    disruption_id = f"seed-ratio-adjustment-{uuid4().hex[:8]}"
+    txn_id = f"UPIADJ{uuid4().hex[:8].upper()}"
+    worker_id = str(chosen_worker["_id"])
+
+    duration_hours = 6.0
+    expected_orders = round(float(chosen_worker.get("avg_orders_per_hour", 3.0)) * duration_hours, 3)
+    actual_orders = round(expected_orders * 0.32, 3)
+    work_loss_ratio = round((expected_orders - actual_orders) / expected_orders, 4) if expected_orders else 0.0
+
+    claim_doc = {
+        "worker_id": worker_id,
+        "policy_id": str(chosen_policy["_id"]),
+        "disruption_id": disruption_id,
+        "disruption_type": "store_outage",
+        "duration_hours": duration_hours,
+        "severity": 0.82,
+        "expected_orders": expected_orders,
+        "actual_orders": actual_orders,
+        "work_loss_ratio": work_loss_ratio,
+        "fraud_risk_score": 0.08,
+        "payout_amount": payout_amount,
+        "payout_txn_id": txn_id,
+        "payout_ledger_id": None,
+        "payout_message": (
+            f"INSTANT PAYOUT: Rs {payout_amount} credited to UPI {chosen_worker['upi_id']} (Txn: {txn_id})"
+        ),
+        "status": "approved",
+        "reason": "Seed ratio micro-adjustment",
+        "impossible_velocity_flag": False,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    claim_result = await db.claims.insert_one(claim_doc)
+
+    await db.policies.update_one(
+        {"_id": chosen_policy["_id"]},
+        {
+            "$inc": {"claims_used": 1},
+            "$set": {
+                "remaining_coverage": round(float(chosen_policy["remaining_coverage"]) - payout_amount, 2),
+                "updated_at": now,
+            },
+        },
+    )
+
+    payout_result = await db.payouts.insert_one(
+        {
+            "worker_id": worker_id,
+            "amount": payout_amount,
+            "trigger_event": "seed_ratio_adjustment",
+            "timestamp": now,
+            "transaction_id": txn_id,
+            "claim_id": str(claim_result.inserted_id),
+            "created_at": now,
+        }
+    )
+
+    await db.claims.update_one(
+        {"_id": claim_result.inserted_id},
+        {"$set": {"payout_ledger_id": str(payout_result.inserted_id), "updated_at": utc_now()}},
+    )
+
+    await db.payout_notifications.insert_one(
+        {
+            "worker_id": worker_id,
+            "claim_id": str(claim_result.inserted_id),
+            "message": claim_doc["payout_message"],
+            "transaction_id": txn_id,
+            "trigger_event": "seed_ratio_adjustment",
+            "upi_id": chosen_worker["upi_id"],
+            "amount": payout_amount,
+            "created_at": now,
+        }
+    )
+
+    return payout_amount
+
+
+async def _rebalance_to_target_ratio(
     db: AsyncIOMotorDatabase,
     workers: list[dict[str, Any]],
-    min_ratio: float = 0.6,
-    max_ratio: float = 0.75,
+    target_ratio: float = TARGET_LOSS_RATIO,
+    tolerance: float = LOSS_RATIO_TOLERANCE,
 ) -> dict[str, float | int]:
     premium_cycles = 0
     payout_events = 0
+    micro_adjustment_amount = 0.0
 
     financials = await _compute_financials(db)
+    guard = 0
 
-    while financials["loss_ratio"] > max_ratio and premium_cycles < 18:
-        for worker in workers:
-            current_worker = await db.workers.find_one({"_id": worker["_id"]})
-            if current_worker:
-                await create_policy_for_worker(db, current_worker)
-        premium_cycles += 1
+    while abs(financials["loss_ratio"] - target_ratio) > tolerance and guard < 40:
+        if financials["loss_ratio"] > target_ratio:
+            for worker in workers:
+                current_worker = await db.workers.find_one({"_id": worker["_id"]})
+                if current_worker:
+                    await create_policy_for_worker(db, current_worker)
+            premium_cycles += 1
+        else:
+            now = utc_now()
+            worker = workers[payout_events % len(workers)]
+            event = {
+                "type": "store_outage",
+                "severity": 0.93,
+                "city": worker["city"],
+                "affected_zones": [worker["zone"]],
+                "start_time": now,
+                "end_time": now + timedelta(hours=7),
+                "source": "seed-ratio-upshift",
+                "trigger_metrics": {"manual": True, "seed_ratio_upshift": True},
+                "created_at": now,
+            }
+            await create_manual_disruption(db, event)
+            payout_events += 1
+        guard += 1
         financials = await _compute_financials(db)
 
-    all_zones = sorted({worker["zone"] for worker in workers})
-    while financials["loss_ratio"] < min_ratio and payout_events < 16:
-        now = utc_now()
-        city, zone = workers[payout_events % len(workers)]["city"], workers[payout_events % len(workers)]["zone"]
-        affected_zones = all_zones if payout_events % 2 == 0 else [zone]
-        event_city = "India-Urban-Grid" if len(affected_zones) > 1 else city
-        event = {
-            "type": "store_outage",
-            "severity": 0.95,
-            "city": event_city,
-            "affected_zones": affected_zones,
-            "start_time": now,
-            "end_time": now + timedelta(hours=8),
-            "source": "seed-ratio-rebalance",
-            "trigger_metrics": {"manual": True, "seed_ratio_rebalance": True},
-            "created_at": now,
-        }
-        await create_manual_disruption(db, event)
-        payout_events += 1
+    precision_guard = 0
+    while precision_guard < 12:
+        target_payout = round(float(financials["total_premium"]) * target_ratio, 2)
+        payout_delta = round(target_payout - float(financials["total_payout"]), 2)
+
+        if abs(payout_delta) <= 0.01:
+            break
+
+        if payout_delta < 0:
+            for worker in workers:
+                current_worker = await db.workers.find_one({"_id": worker["_id"]})
+                if current_worker:
+                    await create_policy_for_worker(db, current_worker)
+            premium_cycles += 1
+        else:
+            adjusted = await _insert_precise_payout_adjustment(db, workers, payout_delta)
+            micro_adjustment_amount += adjusted
+            if adjusted <= 0:
+                break
+
+        precision_guard += 1
         financials = await _compute_financials(db)
 
     return {
         "premium_cycles": premium_cycles,
         "payout_events": payout_events,
+        "micro_adjustment_amount": round(micro_adjustment_amount, 2),
         "total_premium": financials["total_premium"],
         "total_payout": financials["total_payout"],
         "loss_ratio": financials["loss_ratio"],
@@ -302,12 +460,17 @@ async def _seed_demo_fraud_logs(db: AsyncIOMotorDatabase) -> int:
     return created
 
 
-async def seed_demo_data(db: AsyncIOMotorDatabase) -> dict[str, int]:
+async def seed_demo_data(db: AsyncIOMotorDatabase) -> dict[str, int | float]:
     await _reset_demo_collections(db)
     workers = await _build_workers_and_policies(db)
     premium_cycles = await _build_premium_history(db, workers, target_premium=7000)
     disruptions_detected, claims_generated = await _build_target_payouts(db, workers, target_payout=4500)
-    ratio_adjustment = await _rebalance_to_sustainable_ratio(db, workers, min_ratio=0.6, max_ratio=0.75)
+    ratio_adjustment = await _rebalance_to_target_ratio(
+        db,
+        workers,
+        target_ratio=TARGET_LOSS_RATIO,
+        tolerance=LOSS_RATIO_TOLERANCE,
+    )
     fraud_logs_created = await _seed_demo_fraud_logs(db)
 
     return {
@@ -316,7 +479,8 @@ async def seed_demo_data(db: AsyncIOMotorDatabase) -> dict[str, int]:
         "disruptions_detected": disruptions_detected,
         "claims_generated": claims_generated,
         "premium_cycles": premium_cycles,
-        "loss_ratio": int(round(float(ratio_adjustment["loss_ratio"]) * 100)),
+        "loss_ratio": round(float(ratio_adjustment["loss_ratio"]) * 100, 1),
+        "loss_ratio_target": round(TARGET_LOSS_RATIO * 100, 1),
         "total_premium": int(round(float(ratio_adjustment["total_premium"]))),
         "total_payout": int(round(float(ratio_adjustment["total_payout"]))),
         "fraud_logs_created": fraud_logs_created,

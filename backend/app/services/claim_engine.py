@@ -99,12 +99,6 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
         else:
             work_loss_ratio = _bounded((expected_orders - actual_orders) / expected_orders)
 
-        # For critical disruptions, enforce a minimum loss floor so the demo flow
-        # consistently reflects severe real-world income impact.
-        if severity >= 0.9 and expected_orders > 0 and work_loss_ratio < 0.55:
-            work_loss_ratio = 0.55
-            actual_orders = round(expected_orders * (1 - work_loss_ratio), 3)
-
         claim_doc: dict[str, Any] = {
             "worker_id": worker_id,
             "policy_id": str(policy["_id"]),
@@ -127,7 +121,7 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
             "updated_at": utc_now(),
         }
 
-        eligibility_threshold = 0.4 if policy_risk_score < 0.3 else 0.5
+        eligibility_threshold = 0.5
         is_eligible = work_loss_ratio >= eligibility_threshold
 
         if is_eligible:
@@ -171,8 +165,8 @@ async def process_disruption_event(db: AsyncIOMotorDatabase, disruption: dict[st
                 exposure_score = float(policy.get("exposure_score", worker.get("current_exposure_score", 0.4)))
 
                 personalization_factor = 0.8 + (0.2 * reliability_score) + (0.1 * exposure_score)
-                payout_percent = min(severity * personalization_factor, 1.25)
-                duration_factor = min(duration_hours / 24, 1)
+                payout_percent = severity * personalization_factor
+                duration_factor = duration_hours / 24
 
                 payout_amount = round(daily_income * payout_percent * duration_factor, 2)
                 payout_amount = min(payout_amount, float(policy["remaining_coverage"]))

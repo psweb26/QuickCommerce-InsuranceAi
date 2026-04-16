@@ -287,6 +287,8 @@ export default function AdminPage() {
   };
 
   const controlsDisabled = actionLoading !== "";
+  const liveOpsSummary = liveOps?.summary;
+  const nextWeekProjection = predictive?.forecast?.[0]?.likely_payout ?? 0;
 
   return (
     <div className="space-y-6">
@@ -297,6 +299,12 @@ export default function AdminPage() {
         <p className="mt-2 text-slate-600">
           Production simulation controls for monitoring, fraud surveillance, and automated claim orchestration.
         </p>
+        <div className="mt-3 flex flex-wrap gap-2 text-xs">
+          <Badge tone="neutral">Mode: Demo Orchestration</Badge>
+          <Badge tone="good">Workers Tracked: {liveOpsSummary?.workers_tracked ?? 0}</Badge>
+          <Badge tone="warn">Eligible Live: {liveOpsSummary?.eligible_workers ?? 0}</Badge>
+          <Badge tone="alert">Next Week Likely Payout: {currencyINR(nextWeekProjection)}</Badge>
+        </div>
 
         <div className="mt-4 flex flex-wrap gap-2">
           <button
@@ -377,6 +385,29 @@ export default function AdminPage() {
           hintClassName={metrics.loss_ratio <= 1 ? "text-emerald-700" : "text-rose-700"}
           icon={<AlertTriangle className="h-4 w-4 text-rose-700" />}
         />
+      </section>
+
+      <section className="glass rounded-2xl border border-white/70 p-4">
+        <h2 className="text-lg font-bold text-slate-900" style={{ fontFamily: "var(--font-heading)" }}>
+          3-Minute Pitch Flow
+        </h2>
+        <div className="mt-3 grid gap-2 md:grid-cols-3">
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Step 1</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Seed realistic workers + policies</p>
+            <p className="mt-1 text-xs text-slate-600">Click Seed Demo Data to initialize premium, disruption, and fraud streams.</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Step 2</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Trigger manual disruption</p>
+            <p className="mt-1 text-xs text-slate-600">Use Trigger Event to show zero-touch claims and fraud checks in real time.</p>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white/80 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Step 3</p>
+            <p className="mt-1 text-sm font-semibold text-slate-900">Prove business sustainability</p>
+            <p className="mt-1 text-xs text-slate-600">Loss ratio, forecasted payouts, and fraud blocks stay visible for judges.</p>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-4 lg:grid-cols-2">
@@ -471,7 +502,7 @@ export default function AdminPage() {
                   </div>
                   {alert.signals?.ImpossibleVelocityFlag ? (
                     <p className="mt-1 text-xs font-semibold text-rose-700">
-                      ⚠ High Risk: Worker {alert.worker_code || alert.worker_id.slice(-6)} (Impossible Velocity: {Number(alert.signals.SpeedKmph || 120).toFixed(1)}km/h detected).
+                      Warning: High Risk worker {alert.worker_code || alert.worker_id.slice(-6)} (Impossible Velocity: {Number(alert.signals.SpeedKmph || 120).toFixed(1)} km/h detected).
                     </p>
                   ) : null}
                   <p className="mt-1 text-xs text-rose-700">Action: {titleCase(alert.action)}</p>
@@ -547,4 +578,3 @@ export default function AdminPage() {
     </div>
   );
 }
-

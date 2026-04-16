@@ -38,17 +38,21 @@ export function PayoutSimulatorModal({
         </div>
         <div className="space-y-3 px-5 py-5">
           <motion.div
-            className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-2xl"
+            className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-emerald-100 text-xl font-bold text-emerald-700"
             animate={{ scale: [1, 1.15, 1] }}
             transition={{ repeat: 1, duration: 0.7 }}
           >
-            ✓
+            OK
           </motion.div>
           <p className="text-center text-xl font-extrabold text-emerald-700">{currencyINR(amount)} Credited</p>
-          <p className="text-center text-sm text-slate-700">₹{amount.toFixed(2)} Credited to UPI</p>
+          <p className="text-center text-sm text-slate-700">Rs {amount.toFixed(2)} Credited to UPI</p>
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-            <p><span className="font-semibold">UPI ID:</span> {upiId || "N/A"}</p>
-            <p className="mt-1"><span className="font-semibold">Txn ID:</span> {transactionId}</p>
+            <p>
+              <span className="font-semibold">UPI ID:</span> {upiId || "N/A"}
+            </p>
+            <p className="mt-1">
+              <span className="font-semibold">Txn ID:</span> {transactionId}
+            </p>
             <p className="mt-1 text-xs text-slate-500">{prettyDate(createdAt)}</p>
           </div>
           <button
@@ -62,4 +66,3 @@ export function PayoutSimulatorModal({
     </div>
   );
 }
-
